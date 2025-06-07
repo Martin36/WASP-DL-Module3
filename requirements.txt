@@ -1,2 +1,4 @@
 pddlgym
 tqdm
+torch
+torchvision
