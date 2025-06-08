@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 import numpy as np
 
+from utils import set_seed
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
 
 class SinusoidalEmbeddings(nn.Module):
@@ -146,13 +148,6 @@ class DDPMScheduler(nn.Module):
   def forward(self, t):
     return self.beta[t], self.alpha[t]
   
-def set_seed(seed: int = 42):
-  torch.manual_seed(seed)
-  torch.cuda.manual_seed_all(seed)
-  torch.backends.cudnn.deterministic = True
-  torch.backends.cudnn.benchmark = False
-  np.random.seed(seed)
-  random.seed(seed)
 
 def train(batch_size: int=64,
           num_time_steps: int=1000,
