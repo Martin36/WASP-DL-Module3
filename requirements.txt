@@ -1,5 +1,6 @@
 einops
 pddlgym
+pddlgym_planners @ git+https://github.com/ronuchit/pddlgym_planners.git
 timm
 tqdm
 torch

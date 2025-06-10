@@ -242,8 +242,9 @@ def inference(checkpoint_path: str,
         display_reverse(images)
         images = []
 
-if not os.path.exists('checkpoints'):
-  os.makedirs('checkpoints')
+if __name__ == "__main__":
+  if not os.path.exists('checkpoints'):
+    os.makedirs('checkpoints')
 
-train(lr=2e-5, num_epochs=75)
-inference('checkpoints/ddpm_checkpoint')
+  train(lr=2e-5, num_epochs=75)
+  inference('checkpoints/ddpm_checkpoint')
