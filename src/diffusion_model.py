@@ -1,5 +1,6 @@
 # Inspiration taken from: https://medium.com/data-science/diffusion-model-from-scratch-in-pytorch-ddpm-9d9760528946
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,7 +14,6 @@ from timm.utils.model_ema import ModelEmaV3
 from tqdm import tqdm 
 import matplotlib.pyplot as plt
 import torch.optim as optim
-import numpy as np
 
 from utils import set_seed
 
@@ -163,10 +163,6 @@ def train(batch_size: int=64,
 
   scheduler = DDPMScheduler(num_time_steps=num_time_steps)
   model = UNET().to(DEVICE)
-  # if DEVICE == "cuda":
-  #   model = UNET().cuda()
-  # else:
-  #   model = UNET()
   optimizer = optim.Adam(model.parameters(), lr=lr)
   ema = ModelEmaV3(model, decay=ema_decay)
   if checkpoint_path is not None:
@@ -181,7 +177,7 @@ def train(batch_size: int=64,
     for bidx, (x, _) in enumerate(tqdm(train_loader, desc=f"Epoch {i+1}/{num_epochs}")):
       x = x.to(DEVICE)
       x = F.pad(x, (2, 2, 2, 2))
-      t = torch.randint(0,num_time_steps,(batch_size,))
+      t = torch.randint(0, num_time_steps, (batch_size,))
       e = torch.randn_like(x, requires_grad=False)
       a = scheduler.alpha[t].view(batch_size, 1, 1, 1).to(DEVICE)
       x = (torch.sqrt(a)*x) + (torch.sqrt(1-a)*e)
@@ -245,6 +241,9 @@ def inference(checkpoint_path: str,
         plt.show()
         display_reverse(images)
         images = []
+
+if not os.path.exists('checkpoints'):
+  os.makedirs('checkpoints')
 
 train(lr=2e-5, num_epochs=75)
 inference('checkpoints/ddpm_checkpoint')

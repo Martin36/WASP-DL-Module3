@@ -1,4 +1,6 @@
+einops
 pddlgym
+timm
 tqdm
 torch
 torchvision
