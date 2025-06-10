@@ -19,8 +19,8 @@ os.makedirs(args.output_folder, exist_ok=True)
 
 gen_images_count = 0
 pbar = tqdm(total=args.num_images, desc="Generating images", unit="image")
+env = pddlgym.make("PDDLEnvSokoban-v0")
 while gen_images_count < args.num_images:
-  env = pddlgym.make("PDDLEnvSokoban-v0")
   obs, debug_info = env.reset()
   img = env.render()
   for i in range(args.actions_per_env):
