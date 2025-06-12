@@ -93,16 +93,21 @@ class Trainer:
         best_loss = epoch_loss
         print(f'New best loss: {best_loss:.5f}, saving model...')
         # Save the model with the best loss
-        torch.save(model.state_dict(), f'{self._args.output_folder}/best_model.pth')
+        checkpoint = {
+          'weights': model.state_dict(),
+          'optimizer': optimizer.state_dict(),
+          'ema': ema.state_dict()
+        }
+        torch.save(checkpoint, f'{self._args.output_folder}/best_model.pth')
       # print(f'Epoch {i+1} | Loss {total_loss / (60000 / self._args.batch_size):.5f}')
       # Save the checkpoint after each epoch
-      torch.save(model.state_dict(), f'{self._args.output_folder}/latest.pth')
+      checkpoint = {
+        'weights': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'ema': ema.state_dict()
+      }
+      torch.save(checkpoint, f'{self._args.output_folder}/latest.pth')
 
-    # checkpoint = {
-    #   'weights': model.state_dict(),
-    #   'optimizer': optimizer.state_dict(),
-    #   'ema': ema.state_dict()
-    # }
     # torch.save(checkpoint, 'checkpoints/ddpm_checkpoint')
 
 trainer = Trainer(args)
