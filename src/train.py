@@ -22,6 +22,7 @@ arg_parser.add_argument("--num_epochs", type=int, default=15, help="Number of ep
 arg_parser.add_argument("--seed", type=int, default=-1, help="Random seed for reproducibility")
 arg_parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate for the optimizer")
 arg_parser.add_argument("--ema_decay", type=float, default=0.9999, help="Decay rate for the EMA model")
+arg_parser.add_argument("--wandb_name", type=str, help="Name for the Weights & Biases run (optional). If not provided, no Weights & Biases logging will be done.")
 args = arg_parser.parse_args()
 
 class Args:
@@ -35,6 +36,8 @@ class Args:
     self.seed = args.seed
     self.lr = args.lr
     self.ema_decay = args.ema_decay
+    self.wandb_name = args.wandb_name
+
 
 args = Args(args)
 

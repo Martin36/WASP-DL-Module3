@@ -197,21 +197,15 @@ def train(batch_size: int=64,
   }
   torch.save(checkpoint, 'checkpoints/ddpm_checkpoint')
 
-def display_reverse(images: List):
-  _, axes = plt.subplots(1, 10, figsize=(10,1))
-  for i, ax in enumerate(axes.flat):
-    x = images[i].squeeze(0)
-    x = rearrange(x, 'c h w -> h w c')
-    x = x.numpy()
-    ax.imshow(x)
-    ax.axis('off')
-  plt.show()
-
 def inference(checkpoint_path: str,
               num_time_steps: int = 1000,
-              ema_decay: float = 0.9999):
-    checkpoint = torch.load(checkpoint_path)
-    model = UNET().cuda()
+              ema_decay: float = 0.9999,
+              output_folder: str | None = None):
+    if output_folder is not None and not os.path.exists(output_folder):
+      os.makedirs(output_folder)
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+    # model = UNET().cuda()
+    model = UNET()
     model.load_state_dict(checkpoint['weights'])
     ema = ModelEmaV3(model, decay=ema_decay)
     ema.load_state_dict(checkpoint['ema'])
@@ -226,25 +220,27 @@ def inference(checkpoint_path: str,
         for t in reversed(range(1, num_time_steps)):
           t = [t]
           temp = (scheduler.beta[t]/( (torch.sqrt(1-scheduler.alpha[t]))*(torch.sqrt(1-scheduler.beta[t])) ))
-          z = (1/(torch.sqrt(1-scheduler.beta[t])))*z - (temp*model(z.cuda(),t).cpu())
+          # z = (1/(torch.sqrt(1-scheduler.beta[t])))*z - (temp*model(z.cuda(),t).cpu())
+          z = (1/(torch.sqrt(1-scheduler.beta[t])))*z - (temp*model(z,t).cpu())
           if t[0] in times:
               images.append(z)
           e = torch.randn(1, 1, 32, 32)
           z = z + (e*torch.sqrt(scheduler.beta[t]))
         temp = scheduler.beta[0]/( (torch.sqrt(1-scheduler.alpha[0]))*(torch.sqrt(1-scheduler.beta[0])) )
-        x = (1/(torch.sqrt(1-scheduler.beta[0])))*z - (temp*model(z.cuda(),[0]).cpu())
+        # x = (1/(torch.sqrt(1-scheduler.beta[0])))*z - (temp*model(z.cuda(),[0]).cpu())
+        x = (1/(torch.sqrt(1-scheduler.beta[0])))*z - (temp*model(z,[0]).cpu())
 
         images.append(x)
         x = rearrange(x.squeeze(0), 'c h w -> h w c').detach()
         x = x.numpy()
         plt.imshow(x)
-        plt.show()
-        display_reverse(images)
+        plt.savefig(f'{output_folder}/image_{i}.png') if output_folder is not None else plt.show()
+        display_reverse(images, output_folder=output_folder, idx=i)
         images = []
 
 if __name__ == "__main__":
-  if not os.path.exists('checkpoints'):
-    os.makedirs('checkpoints')
+  # if not os.path.exists('checkpoints'):
+  #   os.makedirs('checkpoints')
 
-  train(lr=2e-5, num_epochs=75)
-  inference('checkpoints/ddpm_checkpoint')
+  # train(lr=2e-5, num_epochs=75)
+  inference('checkpoints/ddpm_checkpoint', output_folder='output_images/MNIST')
