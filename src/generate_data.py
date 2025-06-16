@@ -4,8 +4,7 @@ import argparse
 import os
 import shutil
 import pddlgym
-import imageio
-import numpy as np
+from PIL import Image
 from tqdm import tqdm
 from pddlgym_planners.fd import FD
 
@@ -28,8 +27,8 @@ while True: #gen_images_count < args.num_images:
   problem_index += 1
   obs, debug_info = env.reset()
   img = env.render()
-  assert isinstance(img, np.ndarray), "Rendered image should be a numpy array"
-  imageio.imsave(f"{args.output_folder}/frame_{gen_images_count:05d}.png", img)
+  assert isinstance(img, Image.Image), "Rendered image should pillow image"
+  img.save(f"{args.output_folder}/frame_{gen_images_count:05d}.png")
   gen_images_count += 1
   planner = FD(alias_flag="--alias lama-first")
   plan = planner(env.domain,obs,timeout=60)
@@ -38,9 +37,9 @@ while True: #gen_images_count < args.num_images:
     #pbar.update(1)
     #if gen_images_count >= args.num_images:
     #  break
-    action = env.action_space.sample(obs)
+    #action = env.action_space.sample(obs)
     obs, reward, done, truncated, debug_info = env.step(act)
     img = env.render()
-    assert isinstance(img, np.ndarray), "Rendered image should be a numpy array"
-    imageio.imsave(f"{args.output_folder}/frame_{gen_images_count:05d}.png", img)
+    assert isinstance(img, Image.Image), "Rendered image should pillow image"
+    img.save(f"{args.output_folder}/frame_{gen_images_count:05d}.png")
     gen_images_count += 1
