@@ -1,3 +1,6 @@
 data/
 .vscode/
 __pycache__/
+output_images/
+checkpoints/
+outputs/

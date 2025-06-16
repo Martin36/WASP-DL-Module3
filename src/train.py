@@ -1,66 +1,104 @@
-
-
 import argparse
 import random
+import torch
+import torch.optim as optim
+import torch.nn as nn
+import torch.nn.functional as F
+import os
 
+from tqdm import tqdm
+from timm.utils.model_ema import ModelEmaV3
+from torch.utils.data import DataLoader 
+from torchvision import datasets, transforms
+from dataset import SokobanDataset
+from diffusion_model import UNET, DDPMScheduler
 from utils import set_seed
-
 
 arg_parser = argparse.ArgumentParser(description="Train a model using generated Sokoban images")
 arg_parser.add_argument("--data_folder", type=str, required=True, help="Directory containing the generated Sokoban images")
+arg_parser.add_argument("--output_folder", type=str, required=True, help="Directory to save the model checkpoints")
 arg_parser.add_argument("--model", type=str, choices=["diffusion"], required=True, help="Model to train")
 arg_parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
 arg_parser.add_argument("--num_time_steps", type=int, default=1000, help="Number of time steps for the diffusion model")
 arg_parser.add_argument("--num_epochs", type=int, default=15, help="Number of epochs for training")
 arg_parser.add_argument("--seed", type=int, default=-1, help="Random seed for reproducibility")
+arg_parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate for the optimizer")
+arg_parser.add_argument("--ema_decay", type=float, default=0.9999, help="Decay rate for the EMA model")
+arg_parser.add_argument("--wandb_name", type=str, help="Name for the Weights & Biases run (optional). If not provided, no Weights & Biases logging will be done.")
+arg_parser.add_argument("--grayscale", action='store_true', help="Use grayscale images (default is RGB)")
 args = arg_parser.parse_args()
 
 class Args:
   def __init__(self, args: argparse.Namespace):
     self.data_folder = args.data_folder
+    self.output_folder = args.output_folder
     self.model = args.model
     self.batch_size = args.batch_size
     self.num_time_steps = args.num_time_steps
     self.num_epochs = args.num_epochs
     self.seed = args.seed
+    self.lr = args.lr
+    self.ema_decay = args.ema_decay
+    self.wandb_name = args.wandb_name
+    self.grayscale = args.grayscale
 
 args = Args(args)
 
 class Trainer:
-  def __init__(self, args: Args):
+  def __init__(self, args: Args, checkpoint_path: str | None = None):
     self._args = args
+    self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self._checkpoint_path = checkpoint_path
     
     set_seed(random.randint(0, 2**32-1)) if args.seed == -1 else set_seed(args.seed)
+    
+    # Configure wandb
+    self._wandb_run = None
+    if self._args.wandb_name:
+        import wandb
+        self._wandb_run = wandb.init(
+            entity="martin36",
+            project="wasp-dl",
+            name=args.wandb_name,
+            config=args.__dict__,  # Log all arguments
+        )
 
   def train(self):
+    # Create output directory if it doesn't exist
+    if not os.path.exists(self._args.output_folder):
+      os.makedirs(self._args.output_folder)
 
-    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transforms.ToTensor())
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
-
-    scheduler = DDPMScheduler(num_time_steps=num_time_steps)
-    model = UNET().to(DEVICE)
-    # if DEVICE == "cuda":
-    #   model = UNET().cuda()
-    # else:
-    #   model = UNET()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    ema = ModelEmaV3(model, decay=ema_decay)
-    if checkpoint_path is not None:
-      checkpoint = torch.load(checkpoint_path)
+    if self._args.data_folder == 'mnist':
+      train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transforms.ToTensor())
+      train_loader = DataLoader(train_dataset, batch_size=self._args.batch_size, shuffle=True, drop_last=True, num_workers=4)
+      input_channels = 1
+    else:
+      train_dataset = SokobanDataset(data_folder=self._args.data_folder, grayscale=self._args.grayscale)
+      train_loader = DataLoader(train_dataset, batch_size=self._args.batch_size, shuffle=True, drop_last=True, num_workers=4)
+      input_channels = train_dataset[0].shape[0]
+    
+    scheduler = DDPMScheduler(num_time_steps=self._args.num_time_steps)
+    model = UNET(input_channels=input_channels).to(self._device)
+    optimizer = optim.Adam(model.parameters(), lr=self._args.lr)
+    ema = ModelEmaV3(model, decay=self._args.ema_decay)
+    if self._checkpoint_path is not None:
+      checkpoint = torch.load(self._checkpoint_path)
       model.load_state_dict(checkpoint['weights'])
       ema.load_state_dict(checkpoint['ema'])
       optimizer.load_state_dict(checkpoint['optimizer'])
     criterion = nn.MSELoss(reduction='mean')
+    best_loss = float('inf')
 
-    for i in range(num_epochs):
+    for i in range(self._args.num_epochs):
       total_loss = 0
-      for bidx, (x, _) in enumerate(tqdm(train_loader, desc=f"Epoch {i+1}/{num_epochs}")):
-        x = x.to(DEVICE)
-        x = F.pad(x, (2, 2, 2, 2))
-        t = torch.randint(0,num_time_steps,(batch_size,))
+      for x in tqdm(train_loader, desc=f"Epoch {i+1}/{self._args.num_epochs}"):
+        x = x.to(self._device)
+        if self._args.data_folder == 'mnist':
+          x = F.pad(x, (2, 2, 2, 2))
+        t = torch.randint(0, self._args.num_time_steps, (self._args.batch_size,))
         e = torch.randn_like(x, requires_grad=False)
-        a = scheduler.alpha[t].view(batch_size, 1, 1, 1).to(DEVICE)
-        x = (torch.sqrt(a)*x) + (torch.sqrt(1-a)*e)
+        a = scheduler.alpha[t].view(self._args.batch_size, 1, 1, 1).to(self._device)
+        x = torch.sqrt(a) * x + torch.sqrt(1 - a) * e
         output = model(x, t)
         optimizer.zero_grad()
         loss = criterion(output, e)
@@ -68,11 +106,27 @@ class Trainer:
         loss.backward()
         optimizer.step()
         ema.update(model)
-      print(f'Epoch {i+1} | Loss {total_loss / (60000/batch_size):.5f}')
+      epoch_loss = total_loss / (len(train_dataset) / self._args.batch_size)
+      print(f'Epoch {i+1} | Loss {epoch_loss:.5f}')
+      if self._wandb_run:
+        self._wandb_run.log({'train_loss': epoch_loss})
+      if epoch_loss < best_loss:
+        best_loss = epoch_loss
+        print(f'New best loss: {best_loss:.5f}, saving model...')
+        # Save the model with the best loss
+        checkpoint = {
+          'weights': model.state_dict(),
+          'optimizer': optimizer.state_dict(),
+          'ema': ema.state_dict()
+        }
+        torch.save(checkpoint, f'{self._args.output_folder}/best_model.pth')
+      # Save the checkpoint after each epoch
+      checkpoint = {
+        'weights': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'ema': ema.state_dict()
+      }
+      torch.save(checkpoint, f'{self._args.output_folder}/latest.pth')
 
-    checkpoint = {
-      'weights': model.state_dict(),
-      'optimizer': optimizer.state_dict(),
-      'ema': ema.state_dict()
-    }
-    torch.save(checkpoint, 'checkpoints/ddpm_checkpoint')
+trainer = Trainer(args)
+trainer.train()
