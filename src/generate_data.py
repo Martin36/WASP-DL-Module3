@@ -24,7 +24,7 @@ gen_images_count = 0
 env = pddlgym.make("PDDLEnvSokoban-v0")
 # assert isinstance(env, pddlgym.core.PDDLEnv), "Environment should be an instance of PDDLEnv"
 
-while problem_index < 5: # There are only 5 different Sokoban instances in pddlgym #gen_images_count < args.num_images:
+while True: # There are only 5 different Sokoban instances in pddlgym #gen_images_count < args.num_images:
   print(f"Generating images for problem index: {problem_index}")
   env.fix_problem_index(problem_index)
   problem_index += 1
