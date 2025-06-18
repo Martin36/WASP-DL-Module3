@@ -57,6 +57,7 @@ def inference(checkpoint_path: str,
     with torch.no_grad():
       model = ema.module.eval()
       for i in range(10):
+        plt.close()
         z = torch.randn(1, *input_dimensions)
         pbar = tqdm(total=num_time_steps, desc=f"Generating image {i+1}/10")
         for t in reversed(range(1, num_time_steps)):
