@@ -16,19 +16,19 @@ from torch.utils.data import DataLoader
 import math
 
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau,LambdaLR,SequentialLR
 
 from datetime import datetime
 
 
 dataset_path = 'data'
 
-cuda = True
+cuda = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if cuda else "cpu")
 batch_size = 80
 image_channels = 3
 latent_dim = 200
-lr = 1e-2
+lr = 1e-3
 epochs = 200
 
 
@@ -53,7 +53,7 @@ class PDDLDataset(Dataset):
             image = self.transform(image)
 
         return image
-    
+
 class PrintLayer(nn.Module):
     def __init__(self):
         super(PrintLayer, self).__init__()
@@ -62,7 +62,7 @@ class PrintLayer(nn.Module):
         # Do your print / debug stuff here
         print(x.shape)
         return x
-    
+
 class Flatten(nn.Module):
     def forward(self, input):
         return input.view(input.size(0), -1)
@@ -77,12 +77,10 @@ class Encoder(nn.Module):
           new_channels = min(channels + c_increase,max_channels)
           convolutions.append(nn.Conv2d(channels, new_channels, kernel_size=3)),
           convolutions.append(nn.ReLU())
+          convolutions.append(nn.BatchNorm2d(new_channels))
           #convolutions.append(PrintLayer())
           channels = new_channels
         flattened_dim = channels*(56-2*num_layers)*(56-2*num_layers) #final_channels*image_channels*final_width*final_height
-        print(f"final image size: {56-2*num_layers}")
-        print(f"flattened dim: {flattened_dim}")
-        print(f"max channels: {channels}")
         #print(f"final channels {channels}")
         self.encoder = nn.Sequential(*convolutions)
         self.flatten = Flatten()
@@ -90,18 +88,15 @@ class Encoder(nn.Module):
         self.FC_mean  = nn.Linear(3*latent_dim, latent_dim)
         self.FC_var   = nn.Linear(3*latent_dim, latent_dim)
 
-        self.training = True
-
     def forward(self, x):
         h = self.encoder(x)
         h = self.flatten(h)
-        h_ = self.FC_input(h)
-        mean     = self.FC_mean(h_)
-        log_var  = self.FC_var(h_)                     # encoder produces mean and log of variance
+        h = self.FC_input(h)
+        mean     = self.FC_mean(h)
+        log_var  = self.FC_var(h)                     # encoder produces mean and log of variance
                                                        #             (i.e., parateters of simple tractable normal distribution "q"
-
         return mean, log_var
-    
+
 class UnFlatten(nn.Module):
     def __init__(self, channels, height, width):
       super(UnFlatten, self).__init__()
@@ -138,31 +133,31 @@ class Decoder(nn.Module):
     def forward(self, x):
         #print(x.shape)
         x = self.FC_hidden(x)
-        #print(x.shape)
         x = self.unflatten(x)
         x_hat = self.decoder(x)
         return x_hat
-    
-class Model(nn.Module):
-    def __init__(self, Encoder, Decoder):
-        super(Model, self).__init__()
-        self.Encoder = Encoder
-        self.Decoder = Decoder
 
-    def reparameterization(self, mean, var):
-        epsilon = torch.randn_like(var).to(DEVICE)        # sampling epsilon
-        z = mean + var*epsilon                          # reparameterization trick
-        return z
+class Model(nn.Module):
+    def __init__(self, encoder, decoder):
+        super(Model, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.softplus = nn.Softplus()
+
+    def reparameterization(self, mean, log_var,eps=1e-8):
+        scale = self.softplus(log_var) + eps
+        scale_tril = torch.diag_embed(scale)
+        return torch.distributions.MultivariateNormal(mean, scale_tril=scale_tril).rsample()
 
 
     def forward(self, x):
-        mean, log_var = self.Encoder(x)
-        z = self.reparameterization(mean, torch.exp(0.5 * log_var)) # takes exponential function (log var -> var)
-        x_hat = self.Decoder(z)
+        mean, log_var = self.encoder(x)
+        z = self.reparameterization(mean, log_var) # takes exponential function (log var -> var)
+        x_hat = self.decoder(z)
 
         return x_hat, mean, log_var
-    
-    
+
+
 mnist_transform = transforms.Compose([
       transforms.ToPILImage(),
       #transforms.Grayscale(),
@@ -178,10 +173,10 @@ train_dataset = PDDLDataset(dataset_path, transform=mnist_transform)
 
 train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)#, **kwargs)
 
-encoder = Encoder(image_channels,latent_dim,max_channels=12,num_layers=12)
-decoder = Decoder(image_channels,latent_dim,12*32*32,32,max_channels=12,num_layers=12,c_decrease=1)
+encoder = Encoder(image_channels,latent_dim,max_channels=12,num_layers=4)
+decoder = Decoder(image_channels,latent_dim,12*48*48,48,max_channels=12,num_layers=4)
 
-model = Model(Encoder=encoder, Decoder=decoder).to(DEVICE)
+model = Model(encoder=encoder, decoder=decoder).to(DEVICE)
 
 def loss_function(x, x_hat, mean, log_var):
     reproduction_loss = nn.functional.binary_cross_entropy(x_hat, x, reduction='sum')
@@ -191,15 +186,27 @@ def loss_function(x, x_hat, mean, log_var):
 
 
 optimizer = AdamW(model.parameters(), lr=lr)
-scheduler = ReduceLROnPlateau(optimizer, 'min',patience=5,cooldown=5,factor=0.6)
+plat_scheduler = ReduceLROnPlateau(optimizer, 'min',patience=5,cooldown=5,factor=0.6)
+
+warmup_steps=50
+def warmup_lambda(step):
+        if step < warmup_steps:
+            # Linear warmup: increases from 0 to 1 over warmup_steps
+            return float(step) / float(max(1, warmup_steps))
+        else:
+            # After warmup, keep factor at 1.0 (or let subsequent scheduler take over)
+            return 1.0
+
+warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
 
 print("Start training VAE...")
 model.train()
-print(lr)
-beta_start = 0.0
+beta_start = 0.0001
 beta_end = 1.0
 beta = beta_start
 beta_anneal_epochs = 0.7*epochs
+training_steps= 0
+scheduler = warmup_scheduler
 for epoch in range(epochs):
     o_repr_loss = 0
     o_kld_loss = 0
@@ -215,6 +222,9 @@ for epoch in range(epochs):
         loss = repr+kld*beta
         loss.backward()
         optimizer.step()
+        training_steps += 1
+    if training_steps == warmup_steps:
+        scheduler = plat_scheduler
     scheduler.step((o_repr_loss + o_kld_loss) / (batch_idx*batch_size))
     if epoch < beta_anneal_epochs:
         beta = beta_start + (beta_end - beta_start) * (epoch / beta_anneal_epochs)
@@ -228,4 +238,3 @@ loss_str = f"{final_loss:.4f}".replace('.', 'p')
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 filename = f"model_{timestamp}_loss_{loss_str}.pth"
 torch.save({"state_dict": model.state_dict()}, filename)
-
