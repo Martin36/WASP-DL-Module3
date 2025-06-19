@@ -17,30 +17,40 @@ dataset_path = 'data'
 
 cuda = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if cuda else "cpu")
-batch_size = 80
-image_channels = 3
-latent_dim = 200
-lr = 5e-3
-epochs = 200
 
+grayscale = True
+image_channels = 1 if grayscale else 3
+latent_dim = 350
+lr = 4e-3
+epochs = 400
+max_channels = 15
+num_layers = 5
+latent_image_size = 56-2*num_layers
+batch_size = 80
 
 mnist_transform = transforms.Compose([
       transforms.ToPILImage(),
       #transforms.Grayscale(),
       transforms.RGB(),
-      #transforms.Resize((64,64)),
       transforms.ToImage(),
       transforms.ToDtype(torch.float32, scale=True),
 ])
 
-#kwargs = {'num_workers': 1, 'pin_memory': True}
+mnist_transform_grayscale = transforms.Compose([
+      transforms.ToPILImage(),
+      transforms.Grayscale(),
+      transforms.ToImage(),
+      transforms.ToDtype(torch.float32, scale=True),
+])
 
-train_dataset = PDDLDataset(dataset_path, transform=mnist_transform)
 
-train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)#, **kwargs)
+train_dataset = PDDLDataset(dataset_path, transform=mnist_transform_grayscale) if grayscale else PDDLDataset(dataset_path, transform=mnist_transform)
 
-encoder = Encoder(image_channels,latent_dim,max_channels=12,num_layers=4)
-decoder = Decoder(image_channels,latent_dim,12*48*48,48,max_channels=12,num_layers=4)
+train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
+
+
+encoder = Encoder(image_channels,latent_dim,max_channels=max_channels,num_layers=num_layers)
+decoder = Decoder(image_channels,latent_dim,max_channels*latent_image_size*latent_image_size,latent_image_size,max_channels=max_channels,num_layers=num_layers)
 
 model = Model(encoder=encoder, decoder=decoder).to(DEVICE)
 
@@ -52,9 +62,9 @@ def loss_function(x, x_hat, mean, log_var):
 
 
 optimizer = AdamW(model.parameters(), lr=lr)
-plat_scheduler = ReduceLROnPlateau(optimizer, 'min',patience=5,cooldown=5,factor=0.6)
+#plat_scheduler = ReduceLROnPlateau(optimizer, 'min',patience=5,cooldown=5,factor=0.6)
 
-warmup_steps=50
+warmup_steps=350
 def warmup_lambda(step):
         if step < warmup_steps:
             # Linear warmup: increases from 0 to 1 over warmup_steps
@@ -67,12 +77,17 @@ warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
 
 print("Start training VAE...")
 model.train()
-beta_start = 0.0001
+beta_start = 0.01
 beta_end = 1.0
 beta = beta_start
-beta_anneal_epochs = 0.7*epochs
+beta_anneal_epochs = 0.6*epochs
 training_steps= 0
 scheduler = warmup_scheduler
+clip_value = 1.0
+kld_loss = []
+repr_loss = []
+learning_rates = []
+beta_values = []
 for epoch in range(epochs):
     o_repr_loss = 0
     o_kld_loss = 0
@@ -87,15 +102,22 @@ for epoch in range(epochs):
         o_kld_loss += kld.item()
         loss = repr+kld*beta
         loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         optimizer.step()
         training_steps += 1
-    if training_steps == warmup_steps:
-        scheduler = plat_scheduler
-    scheduler.step((o_repr_loss + o_kld_loss) / (batch_idx*batch_size))
+    #if training_steps > warmup_steps:
+        #scheduler = plat_scheduler
+        #scheduler.step((o_repr_loss + o_kld_loss) / (batch_idx*batch_size))
+    #else:
+        scheduler.step()
     if epoch < beta_anneal_epochs:
         beta = beta_start + (beta_end - beta_start) * (epoch / beta_anneal_epochs)
     else:
         beta = beta_end
+    kld_loss.append(o_kld_loss / (batch_idx*batch_size))
+    repr_loss.append(o_repr_loss / (batch_idx*batch_size))
+    learning_rates.append(scheduler.get_last_lr())
+    beta_values.append(beta)
     print(f"\tEpoch: {epoch + 1}\tAverage Loss: {o_kld_loss / (batch_idx*batch_size):.2f},{o_repr_loss / (batch_idx*batch_size):.2f} \t lr: {scheduler.get_last_lr()} \t kld_scale: {beta:.2f}")
 
 print("Finish!!")
@@ -103,4 +125,14 @@ final_loss = (o_kld_loss + o_repr_loss) / (batch_idx*batch_size)
 loss_str = f"{final_loss:.4f}".replace('.', 'p')
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 filename = f"model_{timestamp}_loss_{loss_str}.pth"
-torch.save({"state_dict": model.state_dict()}, filename)
+torch.save(
+    {
+        "state_dict": model.state_dict(),
+        "latent_dim": latent_dim,
+        "max_channels": max_channels,
+        "num_layers": num_layers,
+        "latent_image_size": latent_image_size,
+        "kld_loss": kld_loss,
+        "repr_loss": repr_loss,
+        "betas": beta_values
+    }, filename)

@@ -45,11 +45,13 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         convolutions = []
         channels = image_channels
+        image_size = 56
         for i in range(num_layers):
           new_channels = min(channels + c_increase,max_channels)
           convolutions.append(nn.Conv2d(channels, new_channels, kernel_size=3)),
+          image_size -= 2
           convolutions.append(nn.ReLU())
-          convolutions.append(nn.BatchNorm2d(new_channels))
+          convolutions.append(nn.LayerNorm([new_channels,image_size,image_size]))
           #convolutions.append(PrintLayer())
           channels = new_channels
         flattened_dim = channels*(56-2*num_layers)*(56-2*num_layers) #final_channels*image_channels*final_width*final_height
@@ -88,13 +90,14 @@ class Decoder(nn.Module):
         self.unflatten = nn.Sequential(UnFlatten(channels,inner_image,inner_image),nn.ReLU())
 
         deconvs = [] #[PrintLayer()]
-
+        image_size = inner_image
         for i in range(num_layers-1):
           new_channels = max(channels - c_decrease, image_channels)
           deconvs.append(nn.ConvTranspose2d(channels,new_channels, kernel_size=3))
-          deconvs.append(nn.ReLU())
-          deconvs.append(nn.BatchNorm2d(new_channels))
-          #deconvs.append(PrintLayer()),
+          image_size += 2
+          deconvs.append(nn.ReLU()),
+          deconvs.append(nn.LayerNorm([new_channels,image_size,image_size]))
+          #deconvs.append(PrintLayer())
           channels = new_channels
         new_channels = max(channels - c_decrease, image_channels)
         deconvs.append(nn.ConvTranspose2d(channels,new_channels, kernel_size=3))
@@ -115,17 +118,14 @@ class Model(nn.Module):
         super(Model, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.softplus = nn.Softplus()
 
-    def reparameterization(self, mean, log_var,eps=1e-8):
-        scale = self.softplus(log_var) + eps
-        scale_tril = torch.diag_embed(scale)
-        return torch.distributions.MultivariateNormal(mean, scale_tril=scale_tril).rsample()
-
+    def reparameterization(self, mean, var):
+        return torch.distributions.Normal(mean,var).rsample()
 
     def forward(self, x):
         mean, log_var = self.encoder(x)
-        z = self.reparameterization(mean, log_var) # takes exponential function (log var -> var)
+        log_var = torch.clamp(log_var, -30, 30)
+        z = self.reparameterization(mean, torch.exp(0.5 * log_var)) # takes exponential function (log var -> var)
         x_hat = self.decoder(z)
 
         return x_hat, mean, log_var
