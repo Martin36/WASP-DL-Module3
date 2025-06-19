@@ -3,6 +3,7 @@ import torch
 from vae import Model,Encoder,Decoder,PDDLDataset
 from torch.utils.data import DataLoader
 import torchvision.transforms.v2 as transforms
+from operator import add
 
 path = "src/model_2025-06-19_13-36-52_loss_1835p3415.pth"
 dataset_path = 'data'
@@ -16,6 +17,8 @@ batch_size = model_dict["batch_size"]
 max_channels = model_dict["max_channels"]
 num_layers = model_dict["num_layers"]
 latent_image_size = model_dict["latent_image_size"]
+repr_loss = model_dict["repr_loss"]
+kld_loss = model_dict["kld_loss"]
 
 encoder = Encoder(image_channels,latent_dim,max_channels=max_channels,num_layers=num_layers)
 decoder = Decoder(image_channels,latent_dim,max_channels*latent_image_size*latent_image_size,latent_image_size,max_channels=max_channels,num_layers=num_layers)
@@ -41,6 +44,16 @@ train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=
 model = Model(encoder=encoder, decoder=decoder).to("cpu")
 model.load_state_dict(torch.load(path,map_location=torch.device('cpu'))["state_dict"])
 model.eval()
+
+
+def plot_training():
+  plt.plot(repr_loss,label="repr loss")
+  plt.plot(kld_loss,label="kld loss")
+  plt.plot(list(map(add,repr_loss,kld_loss)),label="overall loss")
+  plt.legend()
+  plt.show()
+
+plot_training()
 
 
 def show_images_with_ground_truth(x, x_hat, idx=[4,14,36,49]):
@@ -70,6 +83,7 @@ def show_images(x_hat,idx=[4,14,36,49]):
     ax = axes[i]
     ax.imshow(x_hat[id].cpu().permute(1,2,0).numpy())
     ax.axis('off')
+  plt.tight_layout()
   plt.show()
 
 model.eval()
