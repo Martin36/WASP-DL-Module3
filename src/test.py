@@ -82,7 +82,9 @@ def inference(checkpoint_path: str,
         x = rearrange(x.squeeze(0), 'c h w -> h w c').detach()
         x = x.numpy()
         plt.imshow(x)
-        plt.savefig(f'{output_folder}/image_{i}.png') if output_folder is not None else plt.show()
+        plt.axis('off')
+        # plt.savefig(f'{output_folder}/image_{i}.png') if output_folder is not None else plt.show()
+        plt.savefig(f'{output_folder}/image_{i}.png', transparent=True, bbox_inches='tight', pad_inches=0) if output_folder is not None else plt.show()
         display_reverse(images, output_folder=output_folder, idx=i)
         images = []
 
