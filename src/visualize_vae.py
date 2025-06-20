@@ -4,6 +4,7 @@ from vae import Model,Encoder,Decoder,PDDLDataset
 from torch.utils.data import DataLoader
 import torchvision.transforms.v2 as transforms
 from operator import add
+import numpy as np
 
 path = "src/model_2025-06-19_13-36-52_loss_1835p3415.pth"
 dataset_path = 'data'
@@ -50,14 +51,19 @@ def plot_training():
   plt.plot(repr_loss,label="repr loss")
   plt.plot(kld_loss,label="kld loss")
   plt.plot(list(map(add,repr_loss,kld_loss)),label="overall loss")
+  plt.xlabel("epochs")
+  plt.ylabel("loss")
+  plt.yscale('log')
   plt.legend()
-  plt.show()
+  name = "vae_learning_gray.png" if grayscale else "vae_learning.png"
+  plt.savefig(name,dpi=300)
+  #plt.show()
 
 plot_training()
 
 
 def show_images_with_ground_truth(x, x_hat, idx=[4,14,36,49]):
-    fig, axes = plt.subplots(2, len(idx), figsize=(len(idx)* 2, 4))
+    fig, axes = plt.subplots(3, len(idx), figsize=(len(idx)* 2, 4))
     for i,id in enumerate(idx):
       ax_orig = axes[0,i]
       if grayscale:
@@ -74,19 +80,42 @@ def show_images_with_ground_truth(x, x_hat, idx=[4,14,36,49]):
         ax_recon.imshow(x_hat[id].cpu().permute(1,2,0).numpy())
       ax_recon.set_title("Reconstructed")
       ax_recon.axis('off')
-    plt.tight_layout()
-    plt.show()
 
-def show_images(x_hat,idx=[4,14,36,49]):
+      ax_diff = axes[2,i]
+      if grayscale:
+        ax_diff.imshow(np.abs(x[id].cpu().numpy().squeeze() - x_hat[id].cpu().numpy().squeeze()))
+      else:
+        ax_diff.imshow(np.abs(x[id].cpu().permute(1,2,0).numpy() - x_hat[id].cpu().permute(1,2,0).numpy()))
+      ax_diff.set_title("Difference")
+      ax_diff.axis('off')
+    plt.tight_layout()
+    name = "vae_reconstructions_gray.png" if grayscale else "vae_reconstructions.png"
+    plt.savefig(name,dpi=300)
+    #plt.show()
+
+def show_images(x_hat,name,idx=[4,12,14,36,49,55]):
   fig, axes = plt.subplots(1,len(idx),figsize=(len(idx)*3,4))
   for i,id in enumerate(idx):
     ax = axes[i]
     ax.imshow(x_hat[id].cpu().permute(1,2,0).numpy())
     ax.axis('off')
   plt.tight_layout()
-  plt.show()
+  plt.savefig(name,dpi=300)
+  #plt.show()
+
+def show_images_2rows(x_hat,name,idx=[4,7,12,14,24,29,36,49,55,78]):
+  width = len(idx)//2
+  fig, axes = plt.subplots(2,width,figsize=(width*2,4))
+  for i,id in enumerate(idx):
+    ax = axes[i//width,i%width]
+    ax.imshow(x_hat[id].cpu().permute(1,2,0).numpy())
+    ax.axis('off')
+  plt.tight_layout()
+  plt.savefig(name,dpi=300)
 
 model.eval()
+encoder.eval()
+decoder.eval()
 
 with torch.no_grad():
     x = next(iter(train_loader)).to(DEVICE)
@@ -97,9 +126,10 @@ show_images_with_ground_truth(x, x_hat)
 with torch.no_grad():
   noise = torch.randn(batch_size, latent_dim).to(DEVICE)
   generated_images = decoder(noise)
-show_images(generated_images)
+name = "vae_generations_gray.png" if grayscale else "vae_generations.png"
+show_images_2rows(generated_images,name)
 
-def interpolate_latent_space(z1, z2, n_steps=10):
+def interpolate_latent_space(z1, z2,name, n_steps=10):
 
     with torch.no_grad():
         # Perform linear interpolation in the latent space
@@ -115,7 +145,8 @@ def interpolate_latent_space(z1, z2, n_steps=10):
         interpolated_images = decoder(interpolated_latents)
 
         # Visualize the interpolated images
-        show_images(interpolated_images, idx=list(range(n_steps)))
-
-interpolate_latent_space(z[0],z[1],n_steps=6)
-interpolate_latent_space(z[28],z[75],n_steps=6)
+        show_images(interpolated_images,name, idx=list(range(n_steps)))
+name = "vae_interpolation_neighbours_gray.png" if grayscale else "vae_interpolation_neighbours.png"
+interpolate_latent_space(z[0],z[1], name, n_steps=6)
+name = "vae_interpolation_far_gray.png" if grayscale else "vae_interpolation_far.png"
+interpolate_latent_space(z[28],z[75],name,n_steps=6)

@@ -120,7 +120,10 @@ class Model(nn.Module):
         self.decoder = decoder
 
     def reparameterization(self, mean, var):
-        return torch.distributions.Normal(mean,var).rsample()
+        if self.train:
+            return torch.distributions.Normal(mean,var).rsample()
+        else:
+            return mean
 
     def forward(self, x):
         mean, log_var = self.encoder(x)
